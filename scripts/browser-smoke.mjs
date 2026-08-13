@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 import {
+  decodePlaywrightPng,
   measureFlatOutlineContinuity,
   measureOutlineJoinContinuity,
   measureOutlineRetention,
@@ -55,6 +56,7 @@ try {
   await assertPlaybackCameraAndCleanView(page);
   await assertMobileLayouts(browser, baseUrl);
   await assertReducedMotion(browser, baseUrl);
+  await assertMissingFloatLinearExtension(browser, browserSmokeUrl);
 
   assert.deepEqual(errors, [], `Browser errors:\n${errors.join("\n")}`);
   console.log("Browser smoke checks passed for numerical shapes, all 20 modes, and custom drawing.");
@@ -84,6 +86,8 @@ async function assertInitialState(page) {
   assert.equal(await stage.getAttribute("data-boundary-pass-order"), "surface-outline");
   assert.equal(await stage.getAttribute("data-boundary-geometry"), "analytic");
   assert.equal(await stage.getAttribute("data-animation-timing"), "modal");
+  assert.equal(await stage.getAttribute("data-mode-texture-type"), "half-float");
+  assert.equal(await stage.getAttribute("data-mode-texture-filter"), "linear");
   assert.equal(await stage.getAttribute("data-frequency-ratio"), "1");
   assert.equal(await stage.getAttribute("data-cycle-seconds"), "10");
   assertRenderGeometry(await readRenderGeometry(stage), {
@@ -1183,6 +1187,88 @@ async function assertReducedMotion(browser, baseUrl) {
   assert.equal(await page.locator("#membrane-stage").getAttribute("data-playing"), "false");
   assert.equal(await page.locator("#animation-toggle").getAttribute("aria-pressed"), "false");
   await context.close();
+}
+
+async function assertMissingFloatLinearExtension(browser, url) {
+  const context = await browser.newContext({ viewport: { width: 640, height: 480 } });
+  await context.addInitScript(() => {
+    const webGl2Prototype = globalThis.WebGL2RenderingContext?.prototype;
+    if (!webGl2Prototype) return;
+    const getExtension = webGl2Prototype.getExtension;
+    webGl2Prototype.getExtension = function (name) {
+      return name === "OES_texture_float_linear" ? null : getExtension.call(this, name);
+    };
+  });
+
+  const page = await context.newPage();
+  const errors = collectBrowserErrors(page);
+  const consoleMessages = [];
+  page.on("console", (message) => consoleMessages.push(message.text()));
+  try {
+    await page.goto(url, { waitUntil: "networkidle" });
+    await waitForShape(page, "rectangle");
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const canvas = document.querySelector('[data-membrane-canvas="true"]');
+        const context = canvas instanceof HTMLCanvasElement ? canvas.getContext("webgl2") : null;
+        return {
+          contextCreated: context instanceof WebGL2RenderingContext,
+          extensionAvailable: context?.getExtension("OES_texture_float_linear") !== null
+        };
+      }),
+      { contextCreated: true, extensionAvailable: false },
+      "The float-linear compatibility audit did not suppress OES_texture_float_linear"
+    );
+
+    const stage = page.locator("#membrane-stage");
+    assert.equal(await stage.getAttribute("data-playing"), "true");
+    await page.locator("#animation-toggle").click();
+    assert.equal(await stage.getAttribute("data-playing"), "false");
+
+    await renderAtPhase(page, 0);
+    const peak = await captureMembraneCanvas(page, "missing-float-linear-peak");
+    await renderAtPhase(page, Math.PI / 2);
+    const flat = await captureMembraneCanvas(page, "missing-float-linear-flat");
+    const difference = measureRenderedDifference(peak, flat);
+    assert.ok(
+      difference.changedFraction >= 0.01,
+      "The membrane stayed visually flat without OES_texture_float_linear: " +
+        `${difference.changedPixels}/${difference.pixelCount} pixels changed`
+    );
+    assert.ok(
+      !consoleMessages.some((message) =>
+        message.includes("Unable to use linear filtering with floating point textures")
+      ),
+      "Three.js attempted unsupported linear filtering on a 32-bit float texture"
+    );
+    assert.deepEqual(errors, [], `Float-linear compatibility errors:\n${errors.join("\n")}`);
+    console.log(
+      "Missing float-linear extension:",
+      `${difference.changedPixels}/${difference.pixelCount} peak-to-flat pixels changed`
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+function measureRenderedDifference(firstPng, secondPng) {
+  const first = decodePlaywrightPng(firstPng);
+  const second = decodePlaywrightPng(secondPng);
+  assert.equal(first.width, second.width, "Compatibility captures have different widths");
+  assert.equal(first.height, second.height, "Compatibility captures have different heights");
+
+  const pixelCount = first.width * first.height;
+  let changedPixels = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const offset = pixel * 4;
+    const difference = Math.max(
+      Math.abs((first.rgba[offset] ?? 0) - (second.rgba[offset] ?? 0)),
+      Math.abs((first.rgba[offset + 1] ?? 0) - (second.rgba[offset + 1] ?? 0)),
+      Math.abs((first.rgba[offset + 2] ?? 0) - (second.rgba[offset + 2] ?? 0))
+    );
+    if (difference >= 8) changedPixels += 1;
+  }
+  return { pixelCount, changedPixels, changedFraction: changedPixels / pixelCount };
 }
 
 async function chooseShape(page, accessibleName, key) {

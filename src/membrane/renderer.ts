@@ -117,7 +117,7 @@ export class DomainMembraneRenderer {
   private readonly controls: OrbitControls;
   private readonly berlinTexture: THREE.DataTexture;
   private modeTexture: THREE.DataTexture;
-  private modePixels = new Float32Array(1);
+  private modePixels = new Uint16Array(1);
   private readonly uniforms: MembraneUniforms;
   private readonly material: THREE.ShaderMaterial;
   private readonly outlineMaterial: THREE.MeshBasicMaterial;
@@ -247,6 +247,8 @@ export class DomainMembraneRenderer {
     this.host.dataset.cameraFullRotation = "true";
     this.host.dataset.animationTiming = "modal";
     this.host.dataset.modeNormalization = "max-abs";
+    this.host.dataset.modeTextureType = "half-float";
+    this.host.dataset.modeTextureFilter = "linear";
     this.host.dataset.boundaryPassOrder = "surface-outline";
     this.host.setAttribute("aria-busy", "false");
     this.updateSelectionData();
@@ -270,7 +272,7 @@ export class DomainMembraneRenderer {
       geometry.outline.dispose();
       throw new RangeError(`Mode index ${this.modeIndex} is unavailable.`);
     }
-    const nextModePixels = new Float32Array(selectedMode);
+    const nextModePixels = encodeModeTexturePixels(selectedMode);
     const nextModeTexture = createModeTexture(
       nextModePixels,
       prepared.width,
@@ -343,7 +345,7 @@ export class DomainMembraneRenderer {
     this.modeIndex = index;
     const selectedMode = this.domain?.normalizedModes[index];
     if (selectedMode) {
-      this.modePixels.set(selectedMode);
+      encodeModeTexturePixels(selectedMode, this.modePixels);
       this.modeTexture.needsUpdate = true;
     }
     this.updateSelectionData();
@@ -1853,13 +1855,38 @@ function incrementEdgeCount(counts: Uint8Array, index: number): void {
   counts[index] = current + 1;
 }
 
-function createModeTexture(pixels: Float32Array, width: number, height: number): THREE.DataTexture {
+/**
+ * Encode a normalized Float32 mode for a linearly filterable WebGL2 R16F
+ * texture. Accepted modes remain Float32 on the CPU; only the selected GPU
+ * upload uses half precision. Unlike R32F, R16F linear filtering is WebGL2
+ * core functionality and does not depend on OES_texture_float_linear.
+ */
+export function encodeModeTexturePixels(
+  source: ArrayLike<number>,
+  target: Uint16Array<ArrayBuffer> = new Uint16Array(source.length)
+): Uint16Array<ArrayBuffer> {
+  if (target.length !== source.length) {
+    throw new RangeError(
+      `Mode texture target length ${target.length} does not match source length ${source.length}.`
+    );
+  }
+  for (let index = 0; index < source.length; index += 1) {
+    const value = source[index];
+    if (value === undefined || !Number.isFinite(value)) {
+      throw new RangeError(`Mode texture sample ${index} must be finite; received ${String(value)}.`);
+    }
+    target[index] = THREE.DataUtils.toHalfFloat(value);
+  }
+  return target;
+}
+
+function createModeTexture(pixels: Uint16Array, width: number, height: number): THREE.DataTexture {
   const texture = new THREE.DataTexture(
     pixels,
     width,
     height,
     THREE.RedFormat,
-    THREE.FloatType
+    THREE.HalfFloatType
   );
   texture.name = "selected-eigenmode";
   texture.colorSpace = THREE.NoColorSpace;
