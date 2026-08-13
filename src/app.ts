@@ -89,6 +89,9 @@ export function startApp(): void {
   let destroyed = false;
   let requestSequence = 0;
   let parameterTimer = 0;
+  let uiScrollPosition = 0;
+  let shapeMenuOpen = false;
+  let drawerOpen = false;
   let requestedDomain = createRequestedDomain(DEFAULT_SHAPE, initialParameters);
   let fallbackKind: "renderer" | "solver" = "renderer";
 
@@ -115,13 +118,24 @@ export function startApp(): void {
         selectPredefinedShape(selection);
       }, PARAMETER_SOLVE_DELAY_MS);
     },
-    onDraw: () => drawer.open()
+    onDraw: () => drawer.open(),
+    onOpenChange: (open) => {
+      shapeMenuOpen = open;
+      syncRendererPlaying();
+    }
   });
 
   const drawer = new CustomShapeDrawer({
     onApply: (mask) => selectCustomShape(mask),
-    onOpenChange: (open) => renderer?.setPlaying(open ? false : state.isPlaying)
+    onOpenChange: (open) => {
+      drawerOpen = open;
+      syncRendererPlaying();
+    }
   });
+
+  function syncRendererPlaying(): void {
+    renderer?.setPlaying(state.isPlaying && !shapeMenuOpen && !drawerOpen);
+  }
 
   function initializeRenderer(): boolean {
     renderer?.destroy();
@@ -137,7 +151,7 @@ export function startApp(): void {
         },
         onContextRestored: () => {
           fallback.hidden = true;
-          renderer?.setPlaying(state.isPlaying);
+          syncRendererPlaying();
           announce(interactionStatus, "The three-dimensional membrane view was restored.");
         }
       });
@@ -146,7 +160,7 @@ export function startApp(): void {
           rendererData(state.solution, state.selectedShape, state.selectedParameters)
         );
       }
-      renderer.setPlaying(state.isPlaying);
+      syncRendererPlaying();
       renderer.setPageVisible(!document.hidden);
       stage.setAttribute("aria-busy", String(state.isSolving));
       return true;
@@ -270,7 +284,7 @@ export function startApp(): void {
     state.isSolving = false;
     renderer?.setDomain(rendererData(solution, request.key, request.parameters));
     renderer?.setModeIndex(state.modeIndex);
-    renderer?.setPlaying(state.isPlaying);
+    syncRendererPlaying();
     setSolving(false);
     fallback.hidden = true;
     stage.dataset.shape = request.key;
@@ -343,7 +357,7 @@ export function startApp(): void {
 
   function setPlaying(playing: boolean, announceChange = true): void {
     state.isPlaying = playing;
-    renderer?.setPlaying(playing);
+    syncRendererPlaying();
     renderPlayback();
     if (announceChange) {
       announce(interactionStatus, playing ? "Vibration playing." : "Vibration paused.");
@@ -351,6 +365,15 @@ export function startApp(): void {
   }
 
   function setUiVisible(visible: boolean): void {
+    const visibilityChanged = state.isUiVisible !== visible;
+    if (visibilityChanged && !visible) {
+      shapeMenu.setOpen(false);
+      drawer.close();
+    }
+    if (visibilityChanged && !visible) {
+      const mobileBreakpoint = window.matchMedia("(max-width: 800px)");
+      uiScrollPosition = mobileBreakpoint.matches ? window.scrollY : 0;
+    }
     state.isUiVisible = visible;
     document.documentElement.dataset.uiHidden = String(!visible);
     shell.dataset.uiHidden = String(!visible);
@@ -359,7 +382,16 @@ export function startApp(): void {
     uiToggle.setAttribute("aria-label", visible ? "Hide interface" : "Show interface");
     uiToggle.title = visible ? "Hide interface (H)" : "Show interface (H)";
     if (uiLabel) uiLabel.textContent = visible ? "Hide UI" : "Show UI";
-    window.requestAnimationFrame(() => renderer?.resize());
+    window.requestAnimationFrame(() => {
+      if (visibilityChanged && (uiScrollPosition > 0 || window.scrollY > 0)) {
+        window.scrollTo({
+          top: visible ? uiScrollPosition : 0,
+          left: 0,
+          behavior: "auto"
+        });
+      }
+      renderer?.resize();
+    });
   }
 
   modeSlider.addEventListener("input", () => {

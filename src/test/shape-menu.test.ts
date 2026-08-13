@@ -87,15 +87,42 @@ describe("shape menu keyboard navigation", () => {
 
     menu.destroy();
   });
+
+  it("reports open state and restores the trigger before handing off to drawing", () => {
+    const onOpenChange = vi.fn();
+    const onDraw = vi.fn(() => {
+      expect(document.activeElement).toBe(getToggle());
+    });
+    const menu = createMenu(vi.fn(), { onDraw, onOpenChange });
+
+    getToggle().click();
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    expect(document.activeElement).toBe(option("rectangle"));
+
+    getElement<HTMLButtonElement>("draw-shape").click();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(onDraw).toHaveBeenCalledTimes(1);
+    expect(getPanel().hidden).toBe(true);
+    expect(document.activeElement).toBe(getToggle());
+
+    menu.destroy();
+  });
 });
 
-function createMenu(onSelect = vi.fn()): ShapeMenu {
+function createMenu(
+  onSelect = vi.fn(),
+  callbacks: {
+    readonly onDraw?: () => void;
+    readonly onOpenChange?: (open: boolean) => void;
+  } = {}
+): ShapeMenu {
   return new ShapeMenu({
     initialKey: "rectangle",
     initialParameters: {},
     onSelect,
     onParametersInput: vi.fn(),
-    onDraw: vi.fn()
+    onDraw: callbacks.onDraw ?? vi.fn(),
+    ...(callbacks.onOpenChange ? { onOpenChange: callbacks.onOpenChange } : {})
   });
 }
 
@@ -109,6 +136,16 @@ function getPanel(): HTMLElement {
   const panel = document.getElementById("shape-menu");
   if (!panel) throw new Error("Missing shape menu panel.");
   return panel;
+}
+
+function getToggle(): HTMLButtonElement {
+  return getElement<HTMLButtonElement>("shape-menu-toggle");
+}
+
+function getElement<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing #${id}.`);
+  return element as T;
 }
 
 function press(element: HTMLElement, key: string): void {

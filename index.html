@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       name="description"
       content="Explore numerically computed vibration modes of fixed-edge membranes on predefined and hand-drawn domains."
@@ -83,6 +83,7 @@
         <div class="mode-heading">
           <span id="mode-label" class="mode-symbol" aria-hidden="true"></span>
           <output id="mode-value" for="mode-slider">1</output>
+          <span class="mode-total" aria-hidden="true">of 20</span>
         </div>
         <div class="mode-slider-frame">
           <div class="mode-ticks" aria-hidden="true">
@@ -122,7 +123,6 @@
             max="20"
             step="1"
             value="1"
-            orient="vertical"
             aria-label="Vibration mode number omega n"
             aria-valuetext="Mode 1 of 20"
           />
@@ -161,7 +161,10 @@
           <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7V5Zm6 0h4v14h-4V5Z" /></svg>
           <span data-animation-label>Pause</span>
         </button>
-        <p class="camera-hint">Drag to rotate <span aria-hidden="true">·</span> Scroll or pinch to zoom</p>
+        <p class="camera-hint">
+          <span class="camera-hint__desktop">Drag to rotate <span aria-hidden="true">·</span> Scroll or pinch to zoom</span>
+          <span class="camera-hint__touch">Drag to rotate <span aria-hidden="true">·</span> Pinch to zoom</span>
+        </p>
       </div>
 
       <div id="drawing-overlay" class="drawing-overlay" hidden>

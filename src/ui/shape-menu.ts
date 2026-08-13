@@ -17,6 +17,7 @@ export interface ShapeMenuOptions {
   readonly onSelect: (selection: ShapeMenuSelection) => void;
   readonly onParametersInput: (selection: ShapeMenuSelection) => void;
   readonly onDraw: () => void;
+  readonly onOpenChange?: (open: boolean) => void;
 }
 
 export class ShapeMenu {
@@ -85,13 +86,18 @@ export class ShapeMenu {
 
   setOpen(open: boolean): void {
     if (this.destroyed) return;
+    if (open === !this.panel.hidden) return;
+    const restoreToggleFocus = !open && this.panel.contains(document.activeElement);
     this.panel.hidden = !open;
     this.toggle.setAttribute("aria-expanded", String(open));
+    this.callbacks.onOpenChange?.(open);
     if (open) {
       const activeKey = this.buttons.has(this.selectedKey)
         ? this.selectedKey
         : this.optionKeys()[0];
       if (activeKey) window.requestAnimationFrame(() => this.focusOption(activeKey));
+    } else if (restoreToggleFocus) {
+      this.toggle.focus();
     }
   }
 

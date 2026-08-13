@@ -52,7 +52,7 @@ try {
   await assertCustomDrawing(page);
   await assertBoundaryFrameContinuity(page);
   await assertPlaybackCameraAndCleanView(page);
-  await assertResponsiveLayout(page);
+  await assertMobileLayouts(browser, baseUrl);
   await assertReducedMotion(browser, baseUrl);
 
   assert.deepEqual(errors, [], `Browser errors:\n${errors.join("\n")}`);
@@ -75,6 +75,7 @@ async function assertInitialState(page) {
   assert.equal(await stage.getAttribute("data-grid-visible"), "true");
   assert.equal(await stage.getAttribute("data-nodal-lines-visible"), null);
   assert.equal(await stage.getAttribute("data-outline-visible"), "true");
+  assert.equal(await stage.getAttribute("data-domain-y-world-z-scale"), "-1");
   assert.equal(
     await stage.getAttribute("data-boundary-occlusion"),
     "depth-tested-exterior-frame"
@@ -715,9 +716,11 @@ async function setBoundaryCamera(page, pose) {
     await pressRepeated(stage, "ArrowDown", 6);
     await pressRepeated(stage, "=", 3);
   }
-  // OrbitControls applies keyboard rotations through damping. Let the grazing
-  // pose settle fully before both reading its camera vector and capturing it.
-  await page.waitForTimeout(pose === "top-down" || pose === "grazing" ? 400 : 100);
+  // OrbitControls applies keyboard rotations through damping. Dense analytic
+  // meshes can render slowly enough that 400 ms does not finish the grazing
+  // rotation, so leave enough time for the pose to settle before reading and
+  // capturing it.
+  await page.waitForTimeout(pose === "grazing" ? 1_200 : pose === "top-down" ? 400 : 100);
   const camera = (await stage.getAttribute("data-camera")).split(",").map(Number);
   const distance = Math.hypot(...camera);
   const verticalFraction = camera[1] / distance;
@@ -791,27 +794,376 @@ async function assertPlaybackCameraAndCleanView(page) {
   assert.equal(await page.locator("#app-shell").getAttribute("data-ui-hidden"), "false");
 }
 
-async function assertResponsiveLayout(page) {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForTimeout(120);
-  const layout = await page.evaluate(() => {
-    const stage = document.querySelector("#membrane-stage")?.getBoundingClientRect();
-    const slider = document.querySelector("#mode-slider")?.getBoundingClientRect();
-    const modeControl = document.querySelector("#mode-control")?.getBoundingClientRect();
+async function assertMobileLayouts(browser, baseUrl) {
+  // One touch-capable context covers all responsive viewports without repeating
+  // the numerical shape suite. Resizing this page preserves its accepted
+  // rectangle spectrum while still exercising the real mobile media features.
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    screen: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: true
+  });
+  const page = await context.newPage();
+  const errors = collectBrowserErrors(page);
+  try {
+    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await waitForShape(page, "rectangle");
+
+    for (const viewport of [
+      { width: 320, height: 568 },
+      { width: 390, height: 844 },
+      { width: 430, height: 932 }
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(120);
+      await assertPortraitMobileLayout(page, `${viewport.width}x${viewport.height}`);
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(120);
+    await assertMobileMenuAndDrawer(page);
+    await assertMobileCleanView(page);
+    await page.screenshot({ path: new URL("browser-smoke-mobile.png", artifactDir).pathname });
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForTimeout(120);
+    await assertShortLandscapeLayout(page);
+    await assertLandscapeDrawingBounds(page);
+    await page.screenshot({ path: new URL("browser-smoke-mobile-landscape.png", artifactDir).pathname });
+
+    assert.deepEqual(errors, [], `Mobile browser errors:\n${errors.join("\n")}`);
+  } finally {
+    await context.close();
+  }
+}
+
+async function assertPortraitMobileLayout(page, label) {
+  const layout = await readResponsiveGeometry(page);
+  assert.equal(layout.scrollWidth, layout.viewportWidth, `${label} has horizontal overflow`);
+  assert.ok(
+    layout.scrollHeight <= layout.viewportHeight + 1,
+    `${label} unexpectedly scrolls to ${layout.scrollHeight}px`
+  );
+  assert.ok(Math.abs(layout.stage.left) <= 1, `${label} stage is inset from the left`);
+  assert.ok(
+    Math.abs(layout.stage.width - layout.viewportWidth) <= 1,
+    `${label} stage does not span the viewport`
+  );
+  assert.ok(
+    Math.abs(layout.stage.bottom - layout.modeControl.top) <= 1,
+    `${label} mode dock does not begin after the stage: ` +
+      `${layout.stage.bottom}px vs ${layout.modeControl.top}px`
+  );
+  assertHorizontalModeSlider(layout, label);
+  assertTopControlsDoNotOverlap(layout, label);
+  assert.ok(
+    layout.animationToggle.bottom <= layout.stage.bottom + 1,
+    `${label} playback control extends into the mode dock`
+  );
+  assert.ok(layout.touchHintVisible, `${label} does not expose the touch camera hint`);
+  assert.equal(layout.desktopHintVisible, false, `${label} still exposes the desktop camera hint`);
+  assert.ok(layout.activeShapeName.width > 20, `${label} hides the active shape name`);
+  await assertMinimumTouchTargets(
+    page,
+    ["#shape-menu-toggle", "#mode-slider", "#reset-camera", "#ui-visibility-toggle", "#animation-toggle"],
+    label
+  );
+  assert.ok(
+    Number(await page.locator("#membrane-stage").getAttribute("data-camera-vertical-fov")) > 34,
+    `${label} does not use portrait camera framing`
+  );
+}
+
+async function assertMobileMenuAndDrawer(page) {
+  const stage = page.locator("#membrane-stage");
+  const menuToggle = page.locator("#shape-menu-toggle");
+  const menu = page.locator("#shape-menu");
+  await ensurePlaying(page);
+
+  await menuToggle.tap();
+  await page.waitForFunction(() => document.activeElement?.matches('[role="option"]'));
+  assert.equal(await stage.getAttribute("data-playing"), "false");
+  assert.equal(await menuToggle.getAttribute("aria-expanded"), "true");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-shape")), "rectangle");
+  assertBoundsInsideViewport(await elementBounds(menu), await pageViewport(page), "portrait shape menu");
+
+  await page.locator("#shape-menu-close").tap();
+  assert.equal(await menu.isHidden(), true);
+  assert.equal(await stage.getAttribute("data-playing"), "true");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "shape-menu-toggle");
+
+  await menuToggle.tap();
+  await page.locator("#draw-shape").tap();
+  await page.waitForFunction(() => document.activeElement?.id === "drawing-close");
+  assert.equal(await page.locator("#drawing-overlay").isVisible(), true);
+  assert.equal(await stage.getAttribute("data-playing"), "false");
+  const drawing = await readDrawingGeometry(page);
+  assertBoundsInsideViewport(drawing.dialog, drawing.viewport, "portrait drawing dialog");
+  assertBoundsInsideViewport(drawing.canvas, drawing.viewport, "portrait drawing canvas");
+  assertBoundsInsideViewport(drawing.actions, drawing.viewport, "portrait drawing actions");
+  assert.ok(drawing.canvas.width >= 280, `Portrait drawing canvas is only ${drawing.canvas.width}px wide`);
+  assert.ok(
+    Math.abs(drawing.canvas.width - drawing.canvas.height) <= 1,
+    "Portrait drawing canvas is not square"
+  );
+  assert.ok(
+    drawing.viewport.height - drawing.actions.bottom <= 24,
+    "Portrait drawing actions are not anchored near the safe-area bottom"
+  );
+  await assertMinimumTouchTargets(
+    page,
+    ["#drawing-close", "#drawing-clear", "#drawing-apply"],
+    "portrait drawing dialog"
+  );
+
+  await page.locator("#drawing-close").tap();
+  assert.equal(await page.locator("#drawing-overlay").isHidden(), true);
+  assert.equal(await stage.getAttribute("data-playing"), "true");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "shape-menu-toggle");
+}
+
+async function assertMobileCleanView(page) {
+  const uiToggle = page.locator("#ui-visibility-toggle");
+  const stage = page.locator("#membrane-stage");
+  await ensurePlaying(page);
+  await page.locator("#shape-menu-toggle").tap();
+  assert.equal(await stage.getAttribute("data-playing"), "false");
+  await page.keyboard.press("h");
+  await page.waitForFunction(
+    () => document.querySelector("#app-shell")?.getAttribute("data-ui-hidden") === "true"
+  );
+  assert.equal(await page.locator("#shape-menu").isHidden(), true);
+  assert.equal(await stage.getAttribute("data-playing"), "true");
+  const hidden = await readResponsiveGeometry(page);
+  assert.ok(
+    Math.abs(hidden.stage.height - hidden.viewportHeight) <= 1,
+    `Clean view stage is ${hidden.stage.height}px instead of ${hidden.viewportHeight}px high`
+  );
+  assert.equal(hidden.modeControlDisplay, "none");
+  assert.ok(
+    hidden.scrollHeight <= hidden.viewportHeight + 1,
+    `Clean view still scrolls to ${hidden.scrollHeight}px`
+  );
+
+  await uiToggle.tap();
+  await page.waitForFunction(
+    () => document.querySelector("#app-shell")?.getAttribute("data-ui-hidden") === "false"
+  );
+  const restored = await readResponsiveGeometry(page);
+  assert.ok(
+    Math.abs(restored.stage.bottom - restored.modeControl.top) <= 1,
+    "Restoring the interface did not return the mode dock below the stage"
+  );
+  assert.notEqual(restored.modeControlDisplay, "none");
+}
+
+async function assertShortLandscapeLayout(page) {
+  const layout = await readResponsiveGeometry(page);
+  assert.equal(layout.scrollWidth, layout.viewportWidth, "Short landscape has horizontal overflow");
+  assert.ok(
+    layout.scrollHeight <= layout.viewportHeight + 1,
+    `Short landscape scrolls to ${layout.scrollHeight}px`
+  );
+  assert.ok(
+    Math.abs(layout.stage.width - layout.viewportWidth) <= 1 &&
+      Math.abs(layout.stage.height - layout.viewportHeight) <= 1,
+    "Short-landscape stage does not fill the viewport"
+  );
+  assertHorizontalModeSlider(layout, "short landscape");
+  assertTopControlsDoNotOverlap(layout, "short landscape");
+  assertBoundsInsideViewport(layout.modeControl, layout, "short-landscape mode dock");
+  assert.ok(
+    layout.animationToggle.right + 8 <= layout.modeControl.left,
+    "Short-landscape play button overlaps the mode dock"
+  );
+  await assertMinimumTouchTargets(
+    page,
+    ["#shape-menu-toggle", "#mode-slider", "#reset-camera", "#ui-visibility-toggle", "#animation-toggle"],
+    "short landscape"
+  );
+}
+
+async function assertLandscapeDrawingBounds(page) {
+  const stage = page.locator("#membrane-stage");
+  await ensurePlaying(page);
+  await page.locator("#shape-menu-toggle").tap();
+  assert.equal(await stage.getAttribute("data-playing"), "false");
+  await page.locator("#draw-shape").tap();
+  await page.waitForFunction(() => document.activeElement?.id === "drawing-close");
+  assert.equal(await stage.getAttribute("data-playing"), "false");
+
+  const drawing = await readDrawingGeometry(page);
+  assert.equal(drawing.dialogScrollHeight, drawing.dialogClientHeight);
+  assertBoundsInsideViewport(drawing.dialog, drawing.viewport, "landscape drawing dialog");
+  assertBoundsInsideViewport(drawing.canvas, drawing.viewport, "landscape drawing canvas");
+  assertBoundsInsideViewport(drawing.header, drawing.viewport, "landscape drawing header");
+  assertBoundsInsideViewport(drawing.actions, drawing.viewport, "landscape drawing actions");
+  assert.ok(drawing.canvas.width >= 300, `Landscape drawing canvas is only ${drawing.canvas.width}px wide`);
+  assert.ok(
+    Math.abs(drawing.canvas.width - drawing.canvas.height) <= 1,
+    "Landscape drawing canvas is not square"
+  );
+  assert.ok(
+    drawing.canvas.right + 8 <= drawing.header.left,
+    "Landscape drawing canvas overlaps the instruction column"
+  );
+  await assertMinimumTouchTargets(
+    page,
+    ["#drawing-close", "#drawing-clear", "#drawing-apply"],
+    "landscape drawing dialog"
+  );
+
+  await page.locator("#drawing-close").tap();
+  assert.equal(await page.locator("#drawing-overlay").isHidden(), true);
+  assert.equal(await stage.getAttribute("data-playing"), "true");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "shape-menu-toggle");
+}
+
+async function ensurePlaying(page) {
+  const stage = page.locator("#membrane-stage");
+  if ((await stage.getAttribute("data-playing")) !== "true") {
+    await page.locator("#animation-toggle").tap();
+  }
+  assert.equal(await stage.getAttribute("data-playing"), "true");
+}
+
+async function assertMinimumTouchTargets(page, selectors, label) {
+  for (const selector of selectors) {
+    const target = page.locator(selector);
+    const bounds = await elementBounds(target);
+    assert.ok(bounds.width >= 44, `${label} ${selector} is only ${bounds.width}px wide`);
+    assert.ok(bounds.height >= 44, `${label} ${selector} is only ${bounds.height}px high`);
+  }
+}
+
+function assertHorizontalModeSlider(layout, label) {
+  assert.ok(layout.slider.width >= 44, `${label} mode slider is narrower than 44px`);
+  assert.ok(layout.slider.height >= 44, `${label} mode slider is shorter than 44px`);
+  assert.ok(
+    layout.slider.width >= layout.slider.height * 3,
+    `${label} mode slider is not horizontal: ${layout.slider.width}x${layout.slider.height}`
+  );
+  assert.equal(layout.sliderWritingMode, "horizontal-tb");
+  for (let index = 1; index < layout.majorMarkCenters.length; index += 1) {
+    assert.ok(
+      layout.majorMarkCenters[index] > layout.majorMarkCenters[index - 1],
+      `${label} mode marks are not ordered horizontally from 1 to 20`
+    );
+  }
+}
+
+function assertTopControlsDoNotOverlap(layout, label) {
+  assert.ok(layout.shapeToggle.left >= -1, `${label} shape control is outside the viewport`);
+  assert.ok(
+    layout.viewControls.right <= layout.viewportWidth + 1,
+    `${label} view controls are outside the viewport`
+  );
+  assert.ok(
+    layout.shapeToggle.right + 8 <= layout.viewControls.left,
+    `${label} top controls overlap: ${layout.shapeToggle.right}px vs ${layout.viewControls.left}px`
+  );
+}
+
+function assertBoundsInsideViewport(bounds, viewport, label) {
+  assert.ok(bounds.left >= -1, `${label} extends left to ${bounds.left}px`);
+  assert.ok(bounds.top >= -1, `${label} extends above the viewport to ${bounds.top}px`);
+  assert.ok(bounds.right <= viewport.width + 1, `${label} extends right to ${bounds.right}px`);
+  assert.ok(bounds.bottom <= viewport.height + 1, `${label} extends below to ${bounds.bottom}px`);
+}
+
+async function readResponsiveGeometry(page) {
+  return page.evaluate(() => {
+    const bounds = (selector) => {
+      const rectangle = document.querySelector(selector)?.getBoundingClientRect();
+      if (!rectangle) throw new Error(`Missing responsive element ${selector}`);
+      return {
+        left: rectangle.left,
+        top: rectangle.top,
+        right: rectangle.right,
+        bottom: rectangle.bottom,
+        width: rectangle.width,
+        height: rectangle.height
+      };
+    };
+    const isVisible = (selector) => {
+      const element = document.querySelector(selector);
+      return element instanceof HTMLElement && getComputedStyle(element).display !== "none";
+    };
+    const majorValues = [1, 5, 10, 15, 20];
     return {
-      scrollWidth: document.documentElement.scrollWidth,
+      width: window.innerWidth,
+      height: window.innerHeight,
       viewportWidth: window.innerWidth,
-      stageWidth: stage?.width ?? 0,
-      sliderWidth: slider?.width ?? 0,
-      modeControlLeft: modeControl?.left ?? 0
+      viewportHeight: window.innerHeight,
+      scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+      scrollHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
+      stage: bounds("#membrane-stage"),
+      modeControl: bounds("#mode-control"),
+      slider: bounds("#mode-slider"),
+      shapeToggle: bounds("#shape-menu-toggle"),
+      activeShapeName: bounds("#active-shape-name"),
+      viewControls: bounds(".view-controls"),
+      animationToggle: bounds("#animation-toggle"),
+      modeControlDisplay: getComputedStyle(document.querySelector("#mode-control")).display,
+      sliderWritingMode: getComputedStyle(document.querySelector("#mode-slider")).writingMode,
+      majorMarkCenters: majorValues.map((value) => {
+        const rectangle = document
+          .querySelector(`[data-mode-mark="${value}"]`)
+          ?.getBoundingClientRect();
+        return (rectangle?.left ?? 0) + (rectangle?.width ?? 0) / 2;
+      }),
+      touchHintVisible: isVisible(".camera-hint__touch"),
+      desktopHintVisible: isVisible(".camera-hint__desktop")
     };
   });
-  assert.equal(layout.scrollWidth, layout.viewportWidth);
-  assert.equal(layout.stageWidth, layout.viewportWidth);
-  assert.ok(layout.sliderWidth >= 44);
-  assert.ok(layout.modeControlLeft >= 6);
-  assert.ok(Number(await page.locator("#membrane-stage").getAttribute("data-camera-vertical-fov")) > 60);
-  await page.screenshot({ path: new URL("browser-smoke-mobile.png", artifactDir).pathname });
+}
+
+async function readDrawingGeometry(page) {
+  return page.evaluate(() => {
+    const bounds = (selector) => {
+      const rectangle = document.querySelector(selector)?.getBoundingClientRect();
+      if (!rectangle) throw new Error(`Missing drawing element ${selector}`);
+      return {
+        left: rectangle.left,
+        top: rectangle.top,
+        right: rectangle.right,
+        bottom: rectangle.bottom,
+        width: rectangle.width,
+        height: rectangle.height
+      };
+    };
+    const dialog = document.querySelector(".drawing-dialog");
+    if (!(dialog instanceof HTMLElement)) throw new Error("Missing drawing dialog");
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      dialog: bounds(".drawing-dialog"),
+      canvas: bounds(".drawing-canvas-wrap"),
+      header: bounds(".drawing-header"),
+      actions: bounds(".drawing-actions"),
+      dialogScrollHeight: dialog.scrollHeight,
+      dialogClientHeight: dialog.clientHeight
+    };
+  });
+}
+
+async function elementBounds(locator) {
+  return locator.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return {
+      left: rectangle.left,
+      top: rectangle.top,
+      right: rectangle.right,
+      bottom: rectangle.bottom,
+      width: rectangle.width,
+      height: rectangle.height
+    };
+  });
+}
+
+async function pageViewport(page) {
+  return page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
 }
 
 async function assertReducedMotion(browser, baseUrl) {

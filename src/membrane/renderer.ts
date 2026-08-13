@@ -15,6 +15,19 @@ const TWO_PI = 2 * Math.PI;
 const DEFAULT_CAMERA_FOV = 34;
 const DEFAULT_CAMERA_DIRECTION = new THREE.Vector3(1.28, 1.02, 1.38).normalize();
 const DEFAULT_CAMERA_DISTANCE = 2.15;
+const DEFAULT_ROTATE_SPEED = 0.68;
+const COMPACT_ROTATE_SPEED = 0.46;
+const COMPACT_LAYOUT_MAX_WIDTH = 800;
+const COMPACT_LANDSCAPE_MAX_WIDTH = 1024;
+const COMPACT_LANDSCAPE_MAX_HEIGHT = 520;
+/**
+ * Domain +y is "up" in the drawing and mask coordinate system. The default
+ * camera looks toward the origin from +z, where an unreflected +z axis would
+ * project downward on screen and mirror every asymmetric domain. Reflect the
+ * complete retained meshes so positions, modes, normals, and the fixed outline
+ * keep one shared orientation.
+ */
+export const DOMAIN_Y_TO_WORLD_Z_SCALE = -1;
 const OUTLINE_COLOR = 0xdde8f5;
 const OUTLINE_WIDTH = 0.008;
 const OUTLINE_HEIGHT = 0.008;
@@ -205,7 +218,7 @@ export class DomainMembraneRenderer {
     this.controls.maxDistance = 5;
     this.controls.minPolarAngle = 0;
     this.controls.maxPolarAngle = Math.PI;
-    this.controls.rotateSpeed = 0.68;
+    this.controls.rotateSpeed = DEFAULT_ROTATE_SPEED;
     this.controls.zoomSpeed = 0.8;
     this.controls.target.set(0, 0, 0);
     this.controls.addEventListener("change", this.requestFrame);
@@ -266,9 +279,11 @@ export class DomainMembraneRenderer {
     const nextSurface = new THREE.Mesh(geometry.surface, this.material);
     nextSurface.name = "numerical-membrane";
     nextSurface.frustumCulled = false;
+    nextSurface.scale.z = DOMAIN_Y_TO_WORLD_Z_SCALE;
     const nextOutline = new THREE.Mesh(geometry.outline, this.outlineMaterial);
     nextOutline.name = "fixed-boundary-outline";
     nextOutline.frustumCulled = false;
+    nextOutline.scale.z = DOMAIN_Y_TO_WORLD_Z_SCALE;
     // Match the reference square renderer: submit the frame after the surface,
     // while retaining ordinary depth testing. Equal-depth fixed-edge samples
     // are therefore pale, but a genuinely nearer displaced lobe can still
@@ -312,6 +327,7 @@ export class DomainMembraneRenderer {
     this.host.dataset.surfaceIndexed = `${geometry.surface.index !== null}`;
     this.host.dataset.worldWidth = `${prepared.worldWidth}`;
     this.host.dataset.worldHeight = `${prepared.worldHeight}`;
+    this.host.dataset.domainYWorldZScale = `${nextSurface.scale.z}`;
     this.host.dataset.boundaryGeometry = prepared.visualBoundary ? "analytic" : "raster";
     this.host.dataset.boundaryOcclusion = "depth-tested-exterior-frame";
     this.updateSelectionData();
@@ -462,6 +478,10 @@ export class DomainMembraneRenderer {
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
+    const usesCompactControls =
+      width <= COMPACT_LAYOUT_MAX_WIDTH ||
+      (width <= COMPACT_LANDSCAPE_MAX_WIDTH && height <= COMPACT_LANDSCAPE_MAX_HEIGHT);
+    this.controls.rotateSpeed = usesCompactControls ? COMPACT_ROTATE_SPEED : DEFAULT_ROTATE_SPEED;
     // Preserve the reference framing on wide screens, while keeping the
     // horizontal field of view equally generous in a narrow portrait stage.
     this.camera.fov =
@@ -473,6 +493,7 @@ export class DomainMembraneRenderer {
     this.camera.updateProjectionMatrix();
     this.host.dataset.pixelRatio = pixelRatio.toFixed(3);
     this.host.dataset.cameraVerticalFov = this.camera.fov.toFixed(3);
+    this.host.dataset.cameraRotateSpeed = this.controls.rotateSpeed.toFixed(2);
     this.requestFrame();
   }
 
