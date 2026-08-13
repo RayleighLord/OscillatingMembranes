@@ -1,7 +1,10 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 
-import { DOMAIN_Y_TO_WORLD_Z_SCALE } from "../membrane/renderer";
+import {
+  DOMAIN_Y_TO_WORLD_Z_SCALE,
+  DomainMembraneRenderer
+} from "../membrane/renderer";
 import {
   FUNDAMENTAL_CYCLE_SECONDS,
   animationCycleSeconds,
@@ -139,5 +142,35 @@ describe("domain-to-screen orientation", () => {
 
     expect(top.y).toBeGreaterThan(bottom.y);
     expect(projectedOrientation).toBeGreaterThan(0);
+  });
+});
+
+describe("renderer phase control", () => {
+  it("normalizes finite phases and rejects invalid values", () => {
+    const internals = Object.create(DomainMembraneRenderer.prototype) as {
+      destroyed: boolean;
+      playing: boolean;
+      phase: number;
+      previousFrameTime: number | null;
+      uniforms: { uPhase: { value: number } };
+      host: HTMLElement;
+      requestFrame: () => void;
+    };
+    internals.destroyed = false;
+    internals.playing = false;
+    internals.phase = 0;
+    internals.previousFrameTime = 12;
+    internals.uniforms = { uPhase: { value: 0 } };
+    internals.host = document.createElement("div");
+    internals.requestFrame = () => undefined;
+    const renderer = internals as unknown as DomainMembraneRenderer;
+
+    renderer.setPhase(-Math.PI / 2);
+    expect(internals.host.dataset.phase).toBe((3 * Math.PI / 2).toFixed(6));
+    expect(internals.uniforms.uPhase.value).toBeCloseTo(3 * Math.PI / 2, 12);
+    expect(internals.previousFrameTime).toBeNull();
+    expect(() => renderer.setPhase(Number.NaN)).toThrow(RangeError);
+    internals.playing = true;
+    expect(() => renderer.setPhase(0)).toThrow(/Pause the membrane/);
   });
 });

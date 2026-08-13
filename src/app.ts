@@ -94,6 +94,8 @@ export function startApp(): void {
   let drawerOpen = false;
   let requestedDomain = createRequestedDomain(DEFAULT_SHAPE, initialParameters);
   let fallbackKind: "renderer" | "solver" = "renderer";
+  const browserSmokePhaseControl =
+    new URLSearchParams(window.location.search).get("browser-smoke") === "1";
 
   renderMath(getElement("mode-label"), String.raw`\omega_n`);
   for (const tick of document.querySelectorAll<HTMLElement>("[data-mode-tick]")) {
@@ -443,6 +445,16 @@ export function startApp(): void {
   };
   document.addEventListener("keydown", handleGlobalShortcut);
 
+  const handleBrowserSmokePhase = (event: Event): void => {
+    if (!browserSmokePhaseControl || !(event instanceof CustomEvent)) return;
+    const phase = (event.detail as { readonly phase?: unknown } | null)?.phase;
+    if (typeof phase === "number") renderer?.setPhase(phase);
+  };
+  if (browserSmokePhaseControl) {
+    stage.dataset.browserSmokePhaseControl = "true";
+    stage.addEventListener("membrane-test-set-phase", handleBrowserSmokePhase);
+  }
+
   const handleReducedMotionChange = (): void => {
     if (reducedMotionMedia.matches) {
       setPlaying(false, false);
@@ -459,6 +471,7 @@ export function startApp(): void {
     requestSequence += 1;
     window.clearTimeout(parameterTimer);
     document.removeEventListener("keydown", handleGlobalShortcut);
+    stage.removeEventListener("membrane-test-set-phase", handleBrowserSmokePhase);
     document.removeEventListener("visibilitychange", handleVisibility);
     reducedMotionMedia.removeEventListener("change", handleReducedMotionChange);
     window.removeEventListener("pagehide", handlePageHide);

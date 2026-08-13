@@ -395,6 +395,22 @@ export class DomainMembraneRenderer {
     this.requestFrame();
   }
 
+  /** Set an exact animation phase for a paused renderer. */
+  setPhase(phase: number): void {
+    if (this.destroyed) return;
+    if (this.playing) {
+      throw new Error("Pause the membrane before setting an exact phase.");
+    }
+    if (!Number.isFinite(phase)) {
+      throw new RangeError(`Phase must be finite; received ${String(phase)}.`);
+    }
+    this.phase = ((phase % TWO_PI) + TWO_PI) % TWO_PI;
+    this.previousFrameTime = null;
+    this.uniforms.uPhase.value = this.phase;
+    this.updatePhaseData();
+    this.requestFrame();
+  }
+
   resetView(): void {
     if (this.destroyed) return;
     const dampingWasEnabled = this.controls.enableDamping;

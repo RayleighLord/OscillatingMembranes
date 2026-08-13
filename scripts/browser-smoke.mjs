@@ -17,6 +17,7 @@ const host = "127.0.0.1";
 const port = Number(process.env.BROWSER_SMOKE_PORT ?? 31_000 + (process.pid % 20_000));
 const repositoryPath = "/OscillatingMembranes/";
 const baseUrl = `http://${host}:${port}${repositoryPath}`;
+const browserSmokeUrl = `${baseUrl}?browser-smoke=1`;
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const artifactDir = new URL("../output/playwright/", import.meta.url);
 const viteBin = fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url));
@@ -43,7 +44,7 @@ try {
   });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = collectBrowserErrors(page);
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.goto(browserSmokeUrl, { waitUntil: "networkidle" });
   await waitForShape(page, "rectangle");
 
   await assertInitialState(page);
@@ -592,9 +593,9 @@ async function auditFlatBoundaryContinuity(page, label, expectedFrameComponents)
     `${label}-top-down-positive-peak`
   );
   const positivePeak = measureOutlineRetention(topDownFlat, topDownPositivePeak);
-  const negativePeakPhase = await pauseAtPhase(page, Math.PI, 0.04);
+  const negativePeakPhase = await renderAtPhase(page, Math.PI);
   assert.ok(
-    Math.abs(negativePeakPhase - Math.PI) <= 0.1,
+    Math.abs(negativePeakPhase - Math.PI) <= 1e-6,
     `${label} negative peak stopped too far from pi: phase ${negativePeakPhase}`
   );
   const topDownNegativePeak = await captureMembraneCanvas(
@@ -653,38 +654,46 @@ async function auditGrazingSurfaceSilhouette(page) {
 }
 
 async function pauseAtFlatReference(page) {
-  return pauseAtPhase(page, Math.PI / 2, 0.02);
+  return renderAtPhase(page, Math.PI / 2);
 }
 
-async function pauseAtPhase(page, targetPhase, lead) {
+async function renderAtPhase(page, targetPhase) {
   return page.evaluate(
-    ({ targetPhase, lead }) =>
+    (phase) =>
       new Promise((resolve, reject) => {
         const stage = document.querySelector("#membrane-stage");
-        const toggle = document.querySelector("#animation-toggle");
-        if (!(stage instanceof HTMLElement) || !(toggle instanceof HTMLButtonElement)) {
-          reject(new Error("The membrane stage or animation toggle is unavailable"));
+        if (!(stage instanceof HTMLElement)) {
+          reject(new Error("The membrane stage is unavailable"));
+          return;
+        }
+        if (stage.dataset.playing !== "false") {
+          reject(new Error("Exact rendered phases require a paused membrane"));
+          return;
+        }
+        if (stage.dataset.browserSmokePhaseControl !== "true") {
+          reject(new Error("The browser-smoke phase control is unavailable"));
           return;
         }
 
+        const baselineFrame = Number(stage.dataset.frame);
         const timeout = window.setTimeout(() => {
           observer.disconnect();
-          reject(new Error("Timed out while staging a flat membrane reference"));
+          reject(new Error("Timed out while rendering an exact membrane phase"));
         }, 4_000);
-        const stopAtTargetPhase = () => {
-          const phase = Number(stage.getAttribute("data-phase"));
-          if (phase < targetPhase - lead) return;
-          toggle.click();
+        const finishAfterRender = () => {
+          if (Number(stage.dataset.frame) <= baselineFrame) return;
           observer.disconnect();
           window.clearTimeout(timeout);
-          resolve(Number(stage.getAttribute("data-phase")));
+          resolve(Number(stage.dataset.phase));
         };
-        const observer = new MutationObserver(stopAtTargetPhase);
-        observer.observe(stage, { attributes: true, attributeFilter: ["data-phase"] });
-        toggle.click();
-        stopAtTargetPhase();
+        const observer = new MutationObserver(finishAfterRender);
+        observer.observe(stage, { attributes: true, attributeFilter: ["data-frame"] });
+        stage.dispatchEvent(
+          new CustomEvent("membrane-test-set-phase", { detail: { phase } })
+        );
+        finishAfterRender();
       }),
-    { targetPhase, lead }
+    targetPhase
   );
 }
 
