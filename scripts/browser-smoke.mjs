@@ -235,10 +235,12 @@ async function assertShapeSelectionAndCache(page) {
 
   await chooseShape(page, "Spiral", "spiral");
   assert.equal(await stage.getAttribute("data-boundary-geometry"), "analytic");
+  assert.equal(await stage.getAttribute("data-domain-y-world-z-scale"), "1");
   assert.ok(Number(await stage.getAttribute("data-solver-active-nodes")) > 700);
   assert.match(await page.locator("#membrane-description").textContent(), /spiral/i);
 
   await chooseShape(page, "Circle", "circle");
+  assert.equal(await stage.getAttribute("data-domain-y-world-z-scale"), "-1");
   assert.equal(await stage.getAttribute("data-solver-cache"), "true");
   assert.equal(Number(await stage.getAttribute("data-solver-active-nodes")), circleNodes);
 

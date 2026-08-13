@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   DOMAIN_Y_TO_WORLD_Z_SCALE,
-  DomainMembraneRenderer
+  MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE,
+  DomainMembraneRenderer,
+  domainYToWorldZScale
 } from "../membrane/renderer";
 import {
   FUNDAMENTAL_CYCLE_SECONDS,
@@ -142,6 +144,59 @@ describe("domain-to-screen orientation", () => {
 
     expect(top.y).toBeGreaterThan(bottom.y);
     expect(projectedOrientation).toBeGreaterThan(0);
+  });
+
+  it("mirrors only the MIT spiral as a reverse-side view", () => {
+    expect(domainYToWorldZScale({ kind: "mit-spiral" })).toBe(
+      MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE
+    );
+    expect(domainYToWorldZScale(null)).toBe(DOMAIN_Y_TO_WORLD_Z_SCALE);
+    expect(domainYToWorldZScale({ kind: "radial", outerRadius: 0.8 })).toBe(
+      DOMAIN_Y_TO_WORLD_Z_SCALE
+    );
+
+    const camera = new THREE.PerspectiveCamera(34, 1, 0.05, 20);
+    camera.position.copy(new THREE.Vector3(1.28, 1.02, 1.38).normalize().multiplyScalar(2.15));
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    const belowCamera = camera.clone();
+    belowCamera.position.set(camera.position.x, -camera.position.y, -camera.position.z);
+    belowCamera.up.set(0, -1, 0);
+    belowCamera.lookAt(0, 0, 0);
+    belowCamera.updateMatrixWorld();
+
+    const landmarks = [
+      { x: -0.6, y: -0.35 },
+      { x: 0.45, y: -0.1 },
+      { x: 0.1, y: 0.7 }
+    ];
+    for (const { x, y } of landmarks) {
+      const mirrored = new THREE.Vector3(
+        x,
+        0,
+        MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE * y
+      ).project(camera);
+      const viewedFromBelow = new THREE.Vector3(
+        x,
+        0,
+        DOMAIN_Y_TO_WORLD_Z_SCALE * y
+      ).project(belowCamera);
+      expect(mirrored.x).toBeCloseTo(viewedFromBelow.x, 12);
+      expect(mirrored.y).toBeCloseTo(viewedFromBelow.y, 12);
+    }
+
+    const projectedOrientation = (scale: number): number => {
+      const center = new THREE.Vector3(0, 0, 0).project(camera);
+      const right = new THREE.Vector3(0.5, 0, 0).project(camera);
+      const top = new THREE.Vector3(0, 0, 0.5 * scale).project(camera);
+      return (
+        (right.x - center.x) * (top.y - center.y) -
+        (right.y - center.y) * (top.x - center.x)
+      );
+    };
+    expect(projectedOrientation(DOMAIN_Y_TO_WORLD_Z_SCALE)).toBeGreaterThan(0);
+    expect(projectedOrientation(MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE)).toBeLessThan(0);
   });
 });
 

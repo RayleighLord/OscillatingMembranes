@@ -67,6 +67,8 @@ describe("predefined shape masks", () => {
     expect(getFourConnectedComponents(spiral)).toHaveLength(1);
     expect(isInsideMitSpiral(0.5, 0)).toBe(true);
     expect(isInsideMitSpiral(0, 0)).toBe(false);
+    expect(isInsideMitSpiral(0, 0.75)).toBe(true);
+    expect(isInsideMitSpiral(0, -0.75)).toBe(false);
   });
 
   it("represents custom shapes as an empty grid until the user draws", () => {

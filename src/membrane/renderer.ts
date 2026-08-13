@@ -28,6 +28,7 @@ const COMPACT_LANDSCAPE_MAX_HEIGHT = 520;
  * keep one shared orientation.
  */
 export const DOMAIN_Y_TO_WORLD_Z_SCALE = -1;
+export const MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE = 1;
 const OUTLINE_COLOR = 0xdde8f5;
 const OUTLINE_WIDTH = 0.008;
 const OUTLINE_HEIGHT = 0.008;
@@ -278,14 +279,15 @@ export class DomainMembraneRenderer {
       prepared.width,
       prepared.height
     );
+    const domainYWorldZScale = domainYToWorldZScale(prepared.visualBoundary);
     const nextSurface = new THREE.Mesh(geometry.surface, this.material);
     nextSurface.name = "numerical-membrane";
     nextSurface.frustumCulled = false;
-    nextSurface.scale.z = DOMAIN_Y_TO_WORLD_Z_SCALE;
+    nextSurface.scale.z = domainYWorldZScale;
     const nextOutline = new THREE.Mesh(geometry.outline, this.outlineMaterial);
     nextOutline.name = "fixed-boundary-outline";
     nextOutline.frustumCulled = false;
-    nextOutline.scale.z = DOMAIN_Y_TO_WORLD_Z_SCALE;
+    nextOutline.scale.z = domainYWorldZScale;
     // Match the reference square renderer: submit the frame after the surface,
     // while retaining ordinary depth testing. Equal-depth fixed-edge samples
     // are therefore pale, but a genuinely nearer displaced lobe can still
@@ -794,6 +796,20 @@ function prepareVisualBoundary(
     throw new RangeError("A polygon visual boundary must enclose a nonzero area.");
   }
   return Object.freeze({ kind: "polygon", vertices: Object.freeze(vertices) });
+}
+
+/**
+ * The MIT spiral is intentionally shown with the opposite chirality, as if
+ * the otherwise corrected domain plane were viewed from its reverse side.
+ * Reflecting both retained meshes keeps its sampled modes and fixed outline
+ * together while leaving the canonical MIT predicate and solver mask intact.
+ */
+export function domainYToWorldZScale(
+  boundary: ShapeVisualBoundary | null
+): typeof DOMAIN_Y_TO_WORLD_Z_SCALE | typeof MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE {
+  return boundary?.kind === "mit-spiral"
+    ? MIRRORED_SPIRAL_DOMAIN_Y_TO_WORLD_Z_SCALE
+    : DOMAIN_Y_TO_WORLD_Z_SCALE;
 }
 
 function buildDomainGeometry(domain: PreparedDomain): DomainGeometry {
